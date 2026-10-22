@@ -113,7 +113,7 @@ Requires Docker with Compose v2.
 git clone https://github.com/the3ma/aurora-audit-store.git
 cd aurora-audit-store
 make up      # db, localstack, migrate (schema + role passwords + proofs), api
-make seed    # 20,000 legacy DynamoDB items, about 4% deliberately bad (one per reject reason)
+make seed    # 20,000 legacy DynamoDB items, about 4% deliberately bad (about 1% for each of four reject reasons)
 make smoke   # export -> backfill twice -> both walls -> API -> views -> digest
 ```
 

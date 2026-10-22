@@ -246,6 +246,6 @@ Errors: `{error:{code,message}}`; 400 invalid filter/cursor, 401/403 auth, 404 u
 | localstack | 4566 | dynamodb, s3, secretsmanager, cloudwatch |
 | migrate | - | one-shot: applies migrations, sets `audit_writer`/`audit_reader` passwords from env, runs proofs |
 | api | 3000 | `AUTH_MODE=header` |
-| jobs | - | profile `jobs`, one-shot runner for every CLI; `seed-legacy` writes `SEED_ITEMS` (default 20000) legacy items, about 4% bad (each reject reason) |
+| jobs | - | profile `jobs`, one-shot runner for every CLI; `seed-legacy` writes `SEED_ITEMS` (default 20000) legacy items, about 4% bad (about 1% for each of four reject reasons) |
 
 Local passwords (dev only): owner `owner`, writer `writer`, reader `reader`.
