@@ -26,7 +26,6 @@ packages/
     src/handlers/archive-export.ts  EventBridge cron daily 04:00 UTC
     src/handlers/backfill.ts        manual invoke (also CLI: npm run backfill)
     src/handlers/api.ts             HTTP API (Lambda) ; src/api/server.ts runs the same app locally
-    src/handlers/master-secret-alert.ts  (optional) formats the EventBridge alert -> SNS (env ALERT_TOPIC_ARN)
     src/cli/seed-legacy.ts               npm run seed-legacy (LocalStack DynamoDB table audit-legacy)
     src/cli/simulate-dynamodb-export.ts  npm run simulate-export (prints the exportPrefix for backfill)
 infra/                  AWS CDK v2 (TypeScript) app, jest tests, cdk-nag
