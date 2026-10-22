@@ -15,7 +15,7 @@ same esbuild bundles the Lambdas run.
 
 ```bash
 make up      # db, localstack, migrate (schema + role passwords + 16 proofs), api
-make seed    # 20,000 legacy DynamoDB items, ~1% deliberately bad (SEED_ITEMS to change)
+make seed    # 20,000 legacy DynamoDB items, about 4% deliberately bad (SEED_ITEMS to change)
 make smoke   # export -> backfill twice -> both walls -> API -> views -> digest
 ```
 
@@ -62,5 +62,5 @@ make down               # stop and delete everything
 |---|---|
 | `migrate` exits 1 | Read its log: a failed proof or a changed migration checksum stops it on purpose. `make down` resets the database. |
 | `api` never healthy | It waits for `migrate` to succeed - check `docker compose logs migrate`. |
-| Backfill rejects more than ~1% | The seed is random but seeded (`SEED_RANDOM`); a big jump means a mapping change. |
+| Rejects far from ~4% of the seed | The seed is random but seeded (`SEED_RANDOM`); a big jump means a mapping change. |
 | Port in use | Change the left side of the port mapping in `docker-compose.yml`. |

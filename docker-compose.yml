@@ -1,7 +1,7 @@
 # Local stand-in for the AWS stack: PostgreSQL 16 for Aurora, LocalStack for DynamoDB / S3 / CloudWatch.
 # Every job runs the same esbuild bundles the Lambdas run.
 #   make up      db + localstack + migrate (schema, role passwords, proofs) + api
-#   make seed    legacy DynamoDB items (SEED_ITEMS, ~1% deliberately bad)
+#   make seed    legacy DynamoDB items (SEED_ITEMS, about 4% deliberately bad)
 #   make smoke   export -> backfill twice -> walls -> API -> digest
 name: aurora-audit-store
 

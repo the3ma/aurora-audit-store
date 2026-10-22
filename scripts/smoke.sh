@@ -8,17 +8,17 @@ API="${API:-http://localhost:3000}"
 ok()   { printf '\033[32mok\033[0m  %s\n' "$*"; }
 fail() { printf '\033[31mFAIL: %s\033[0m\n' "$*" >&2; exit 1; }
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
-job()  { LOG_LEVEL=warn docker compose run --rm -T jobs "$@"; }
+job()  { LOG_LEVEL=warn docker compose run --rm --no-deps -T jobs "$@"; }
 sql()  { docker compose exec -T db psql -U audit_owner -d audit -Atq -c "$1"; }
 # Last pretty-printed JSON document in a job's stdout (log lines are single-line JSON).
 last_json() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const i=s.lastIndexOf("\n{\n");process.stdout.write(i<0?s:s.slice(i+1))})'; }
-field() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=process.argv[1].split(".").reduce((o,k)=>o?.[k],JSON.parse(s));process.stdout.write(String(v))})' "$1"; }
+field() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=process.argv[1].split(".").reduce((o,k)=>o?.[k],JSON.parse(s));process.stdout.write(typeof v==="object"&&v!==null?JSON.stringify(v):String(v))})' "$1"; }
 api() { curl -s -H "X-Tenant-Id: $TENANT" -H "X-Actor-Id: smoke" "$@"; }
 
 step "health"
 curl -sf "$API/v1/health" | grep -q '"ok"' || fail "api not healthy"
 ok "api healthy"
-LEGACY=$(LOG_LEVEL=warn docker compose run --rm -T jobs simulate-export | tail -1)
+LEGACY=$(job simulate-export | tail -1)
 [ -n "$LEGACY" ] || fail "simulate-export printed no prefix"
 ok "legacy table exported to s3://legacy-export/$LEGACY"
 

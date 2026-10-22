@@ -8,7 +8,7 @@ help:          ## list targets
 up:            ## build and start db, localstack, migrate (schema + proofs) and the api
 	docker compose up -d --build --wait db localstack api
 
-seed:          ## write SEED_ITEMS legacy DynamoDB items (about 1% deliberately bad)
+seed:          ## write SEED_ITEMS legacy DynamoDB items (about 4% deliberately bad (one per reject reason))
 	SEED_ITEMS=$(SEED_ITEMS) docker compose run --rm jobs seed-legacy
 
 smoke:         ## export -> backfill twice -> walls -> API -> digest

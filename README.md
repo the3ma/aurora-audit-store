@@ -113,7 +113,7 @@ Requires Docker with Compose v2.
 git clone https://github.com/the3ma/aurora-audit-store.git
 cd aurora-audit-store
 make up      # db, localstack, migrate (schema + role passwords + proofs), api
-make seed    # 20,000 legacy DynamoDB items, about 1% deliberately bad
+make seed    # 20,000 legacy DynamoDB items, about 4% deliberately bad (one per reject reason)
 make smoke   # export -> backfill twice -> both walls -> API -> views -> digest
 ```
 
@@ -211,7 +211,7 @@ checklist in [docs/04-cutover-runbook.md](docs/04-cutover-runbook.md).
 |---|---|
 | Schema, walls, proofs, negative control | integration tests on real PostgreSQL 16 in CI |
 | API filters, keyset paging, the LIMIT-before-filter regression | integration tests + the compose smoke test |
-| Backfill invariant, rejects, second run inserts 0 | integration tests + the compose smoke test |
+| Backfill invariant, rejects, second run inserts 0 | integration tests + the compose smoke test (CI run: 20,000 items read, 19,179 inserted, 821 rejected with reasons; second run 0 inserted, 19,179 already present) |
 | Hash chain seals and detects a rewritten row | integration tests |
 | Infrastructure | 130+ CDK assertions, dependency-cycle detector, DBA gate, cdk-nag with zero unsuppressed findings, real esbuild synth |
 | **Not verified** | a live Aurora deployment: rotation through the VPC endpoints, `StartExportTask` into an Object-Locked bucket, the CloudTrail-based owner-secret alarm. The stack synthesizes and is tested, but has not been deployed by the author. |
