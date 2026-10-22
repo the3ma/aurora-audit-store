@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  functions:
+    name: DB + functions
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      # the integration tests create their own roles and databases from this superuser
+      DATABASE_URL_ADMIN: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run format:check
+      - name: Unit tests
+        run: npm test
+      - name: Integration tests on PostgreSQL 16 (migrations, proofs, negative control, API, backfill, digest)
+        run: npm run test:int
+      - run: npm run build
+
+  infra:
+    name: Infrastructure (CDK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            infra/package-lock.json
+      - name: Install functions (bundled by the real synth)
+        run: npm ci
+      - run: npm ci
+        working-directory: infra
+      - run: npm run lint
+        working-directory: infra
+      - name: Tests (assertions, dependency cycles, DBA gate, cdk-nag)
+        run: npm test
+        working-directory: infra
+      - name: Synth dev + prod with real esbuild bundling
+        working-directory: infra
+        run: |
+          npx cdk synth -q -c stage=dev
+          npx cdk synth -q -c stage=prod -c vaultLockMode=compliance -c drRegion=us-west-2
+
+  compose-smoke:
+    name: End-to-end (docker compose)
+    runs-on: ubuntu-latest
+    needs: [functions]
+    env:
+      SEED_ITEMS: '20000'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Start db, localstack, migrate, api
+        run: docker compose up -d --build --wait --wait-timeout 300 db localstack api
+      - name: Seed the legacy DynamoDB table
+        run: docker compose run --rm -T jobs seed-legacy
+      - name: Smoke test
+        run: ./scripts/smoke.sh
+      - name: Logs on failure
+        if: failure()
+        run: docker compose --profile jobs logs --no-color --tail=300
+      - name: Tear down
+        if: always()
+        run: docker compose --profile jobs down -v

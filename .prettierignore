@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+package-lock.json
+infra/
+docs/
+*.md
+*.sql
+*.pem

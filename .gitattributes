@@ -1,0 +1,5 @@
+# Migration checksums are computed over file bytes: a CRLF checkout on Windows must not look like drift.
+* text=auto eol=lf
+*.pem text eol=lf
+*.png binary
+*.gz binary

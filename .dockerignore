@@ -1,0 +1,11 @@
+**/node_modules
+**/dist
+**/coverage
+**/cdk.out
+.git
+.github
+infra
+docs
+*.md
+.env
+.env.*

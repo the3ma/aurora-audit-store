@@ -1,0 +1,6 @@
+node_modules/
+cdk.out/
+dist/
+.smoke/
+# Lookup results (Vpc.fromLookup) contain account and VPC ids; keep them out of a public repo.
+cdk.context.json

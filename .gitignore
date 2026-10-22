@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+cdk.out/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.tmp/
+*.log

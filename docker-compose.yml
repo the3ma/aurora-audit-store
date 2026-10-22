@@ -1,0 +1,92 @@
+# Local stand-in for the AWS stack: PostgreSQL 16 for Aurora, LocalStack for DynamoDB / S3 / CloudWatch.
+# Every job runs the same esbuild bundles the Lambdas run.
+#   make up      db + localstack + migrate (schema, role passwords, proofs) + api
+#   make seed    legacy DynamoDB items (SEED_ITEMS, ~1% deliberately bad)
+#   make smoke   export -> backfill twice -> walls -> API -> digest
+name: aurora-audit-store
+
+x-aws-env: &aws-env
+  AWS_ENDPOINT_URL: http://localstack:4566
+  AWS_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: test # LocalStack's documented dummy credentials
+  AWS_SECRET_ACCESS_KEY: test
+
+x-db-env: &db-env
+  DB_SSL: disable
+  DATABASE_URL_OWNER: postgresql://audit_owner:owner@db:5432/audit
+  DATABASE_URL_WRITER: postgresql://audit_writer:writer@db:5432/audit
+  DATABASE_URL_READER: postgresql://audit_reader:reader@db:5432/audit
+
+x-functions: &functions
+  build:
+    context: .
+    dockerfile: Dockerfile.functions
+  image: aurora-audit-store/functions:local
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: audit
+      POSTGRES_USER: audit_owner # stands in for the cluster master user
+      POSTGRES_PASSWORD: owner
+    ports: ['5432:5432']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U audit_owner -d audit']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  localstack:
+    image: localstack/localstack:4
+    environment:
+      SERVICES: dynamodb,s3,cloudwatch
+    ports: ['4566:4566']
+    volumes:
+      - ./deploy/localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'awslocal s3api head-bucket --bucket evidence']
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  migrate:
+    <<: *functions
+    command: ['migrate']
+    environment:
+      <<: *db-env
+    depends_on:
+      db: { condition: service_healthy }
+    restart: 'no'
+
+  api:
+    <<: *functions
+    command: ['api']
+    environment:
+      <<: *db-env
+      AUTH_MODE: header
+      CORS_ORIGINS: http://localhost:5173
+      PORT: '3000'
+    ports: ['3000:3000']
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:3000/v1/health >/dev/null || exit 1']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  # One-shot jobs: `docker compose run --rm jobs <script> [-- args]`.
+  jobs:
+    <<: *functions
+    profiles: [jobs]
+    environment:
+      <<: [*db-env, *aws-env]
+      LEGACY_TABLE: audit-legacy
+      LEGACY_EXPORT_BUCKET: legacy-export
+      EVIDENCE_BUCKET: evidence
+      SEED_ITEMS: ${SEED_ITEMS:-20000}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      localstack: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }

@@ -1,0 +1,76 @@
+name: Deploy
+
+# Manual only: the Aurora capacity floor bills while idle, so nothing deploys on push.
+# Only the repository owner can start it, credentials come from GitHub OIDC (no stored AWS keys),
+# and without an AWS role configured the job stops with a summary instead of failing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: CDK stage
+        type: choice
+        options: [dev, prod]
+        default: dev
+      dr_region:
+        description: Region of the DR backup vault (deployed first); empty = no cross-region copy
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.stage }}
+  cancel-in-progress: false # never interrupt a running deployment
+
+jobs:
+  deploy:
+    name: CDK deploy (${{ inputs.stage }})
+    if: github.triggering_actor == github.repository_owner
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.stage }} # protect "prod" with required reviewers in the repo settings
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_ROLE: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      STAGE: ${{ inputs.stage }}
+      DR_REGION: ${{ inputs.dr_region }}
+    steps:
+      - name: AWS not configured
+        if: env.AWS_ROLE == ''
+        run: |
+          {
+            echo "### Deploy skipped"
+            echo "Set the repository variable \`AWS_DEPLOY_ROLE_ARN\` (an IAM role that trusts GitHub OIDC) to deploy."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@v7
+        if: env.AWS_ROLE != ''
+      - uses: actions/setup-node@v7
+        if: env.AWS_ROLE != ''
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            infra/package-lock.json
+      - uses: aws-actions/configure-aws-credentials@v6
+        if: env.AWS_ROLE != ''
+        with:
+          role-to-assume: ${{ env.AWS_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Install
+        if: env.AWS_ROLE != ''
+        run: npm ci && npm ci --prefix infra
+      - name: DR vault stack, then the stage stack
+        if: env.AWS_ROLE != ''
+        working-directory: infra
+        run: |
+          ctx=(-c stage="$STAGE")
+          if [ -n "$DR_REGION" ]; then
+            ctx+=(-c drRegion="$DR_REGION")
+            npx cdk deploy AuditDrVault --require-approval never "${ctx[@]}"
+          fi
+          npx cdk deploy "AuditStore-$STAGE" --require-approval never "${ctx[@]}"

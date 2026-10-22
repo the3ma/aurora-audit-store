@@ -1,0 +1,24 @@
+# One image for every local job and the API: `docker run <img> migrate`, `... api`, `... backfill -- --export-prefix x`.
+# The build stage bundles with esbuild exactly like the Lambda packaging, so the runtime stage needs no
+# node_modules, no TypeScript toolchain and no dev dependencies.
+
+FROM node:22-alpine AS build
+WORKDIR /src
+COPY package.json package-lock.json ./
+COPY packages/core/package.json packages/core/
+COPY packages/functions/package.json packages/functions/
+RUN npm ci --no-audit --no-fund
+COPY tsconfig.base.json ./
+COPY db db
+COPY packages packages
+RUN npm run build
+
+FROM node:22-alpine AS runtime
+ENV NODE_ENV=production \
+    PORT=3000
+WORKDIR /app
+COPY --from=build --chown=node:node /src/packages/functions/dist ./
+USER node
+EXPOSE 3000
+ENTRYPOINT ["npm", "run", "--silent"]
+CMD ["api"]
