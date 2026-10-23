@@ -41,6 +41,9 @@ export async function handler(event: CustomResourceEvent): Promise<CustomResourc
     // This message is what CloudFormation shows in the stack events, so it must be scrubbed.
     const { message, code } = describeError(error);
     logger.error('migration failed', { code, message });
+    // No `cause`: the original PostgreSQL error can quote a password literal, and the runtime would
+    // serialise the cause chain into the log - only the scrubbed message may leave this function.
+    // eslint-disable-next-line preserve-caught-error
     throw new Error(code === undefined ? message : `${message} (SQLSTATE ${code})`);
   }
 }

@@ -1,24 +1,37 @@
 version: 2
-# Minor and patch updates arrive grouped; each major update gets its own PR.
+# Minor and patch updates arrive grouped; each major update gets its own PR - except packages that
+# only work in lockstep (eslint + @eslint/js), which always arrive together.
 updates:
   - package-ecosystem: npm
     directory: /
     schedule: { interval: weekly }
     groups:
+      eslint:
+        patterns: ['eslint', '@eslint/*']
       functions-minor:
         update-types: [minor, patch]
     ignore:
       # @types/node follows the Node runtime (22 LTS), not the latest Node release.
       - dependency-name: '@types/node'
         update-types: [version-update:semver-major]
+      # typescript-eslint supports TypeScript < 6.1; upgrade the two together by hand.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+      # Local integration tests must run the same PostgreSQL major as Aurora and CI (16).
+      - dependency-name: embedded-postgres
+        update-types: [version-update:semver-major]
   - package-ecosystem: npm
     directory: /infra
     schedule: { interval: weekly }
     groups:
+      eslint:
+        patterns: ['eslint', '@eslint/*']
       infra-minor:
         update-types: [minor, patch]
     ignore:
       - dependency-name: '@types/node'
+        update-types: [version-update:semver-major]
+      - dependency-name: typescript
         update-types: [version-update:semver-major]
       # cdk-nag 3 replaces NagSuppressions with Validations.acknowledge() and has no regex/prefix
       # suppressions yet; migrate deliberately.
@@ -34,6 +47,6 @@ updates:
     directory: /
     schedule: { interval: weekly }
     ignore:
-      # Node: stay on LTS lines (even majors).
+      # The image runs the Lambda runtime's Node line (22); move both together, by hand.
       - dependency-name: node
-        versions: ['23.x', '25.x', '27.x']
+        update-types: [version-update:semver-major]
