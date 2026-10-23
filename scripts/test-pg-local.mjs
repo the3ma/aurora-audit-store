@@ -32,7 +32,7 @@ const pg = new EmbeddedPostgres({
   onError: (e) => console.error(String(e)),
 });
 
-let code = 1;
+let code;
 try {
   await pg.initialise();
   await pg.start();
