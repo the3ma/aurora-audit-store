@@ -8,7 +8,7 @@ API="${API:-http://localhost:3000}"
 ok()   { printf '\033[32mok\033[0m  %s\n' "$*"; }
 fail() { printf '\033[31mFAIL: %s\033[0m\n' "$*" >&2; exit 1; }
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
-job()  { LOG_LEVEL=warn docker compose run --rm --no-deps -T jobs "$@"; }
+job()  { LOG_LEVEL=warn docker compose --progress quiet run --rm --no-deps -T jobs "$@"; }
 sql()  { docker compose exec -T db psql -U audit_owner -d audit -Atq -c "$1"; }
 # Last pretty-printed JSON document in a job's stdout (log lines are single-line JSON).
 last_json() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const i=s.lastIndexOf("\n{\n");process.stdout.write(i<0?s:s.slice(i+1))})'; }
