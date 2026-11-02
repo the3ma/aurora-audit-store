@@ -2,6 +2,9 @@
 
 ## Where we started
 
+> This story is a composite of problems I have met in production systems, not one company's
+> incident; product details and numbers are changed.
+
 The product is a multi-tenant SaaS. Every user action - sign-in, record created, setting changed,
 invoice voided, file downloaded - writes one row to an **audit log**. Support uses it to answer "who
 changed this?", security uses it for investigations, and external auditors use it to check that the

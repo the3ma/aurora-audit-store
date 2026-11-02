@@ -31,6 +31,9 @@ idempotent, reconciled backfill from a DynamoDB point-in-time export.
 
 ## The problem
 
+> This story is a composite of problems I have met in production systems, not one company's
+> incident; product details and numbers are changed.
+
 A multi-tenant SaaS kept its audit log - one row per user action, to be kept unchanged for seven
 years - in a single DynamoDB table with four GSIs. It was cheap and fast for "the last 50 events of
 this record". Then the audit grid grew filters and auditors started asking questions:
