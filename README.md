@@ -5,6 +5,10 @@
 **Moving an append-only audit log from DynamoDB to Aurora PostgreSQL - without losing, duplicating or
 quietly editing a single event, and being able to prove it.**
 
+<a href="#what-is-verified"><img src="docs/images/smoke.svg" alt="Output of make smoke: 20,000 legacy items backfilled with every reject accounted for, a second run inserting nothing, UPDATE refused by both append-only walls (42501, 23001), idempotent API writes and complete keyset paging" width="880"></a>
+
+<sub>The end-to-end smoke test, as printed by the last <a href="https://github.com/the3ma/aurora-audit-store/actions/workflows/ci.yml">CI run</a> (<code>make smoke</code> locally).</sub>
+
 Aurora Serverless v2 + AWS CDK + TypeScript Lambdas: two append-only walls, schema migrations inside
 the deployment, a tamper-evident hash chain in Object Lock storage, retention by locked copies, and an
 idempotent, reconciled backfill from a DynamoDB point-in-time export.
