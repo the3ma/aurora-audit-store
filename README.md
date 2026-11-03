@@ -3,9 +3,9 @@
 # Aurora Audit Store
 
 **Moving an append-only audit log from DynamoDB to Aurora PostgreSQL - without losing, duplicating or
+quietly editing a single event, and being able to prove it.**
 
 **[Read the case study →](https://the3ma.github.io/aurora-audit-store/)** - the twelve DynamoDB failures, the two append-only walls, the hash chain, seven ADRs and what is (and is not) verified.
-quietly editing a single event, and being able to prove it.**
 
 <a href="#what-is-verified"><img src="docs/images/smoke.svg" alt="Output of make smoke: 20,000 legacy items backfilled with every reject accounted for, a second run inserting nothing, UPDATE refused by both append-only walls (42501, 23001), idempotent API writes and complete keyset paging" width="880"></a>
 
