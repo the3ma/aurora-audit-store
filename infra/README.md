@@ -8,10 +8,10 @@ This is its own npm package (own `package-lock.json`), not part of the root work
 the handlers from `../packages/functions/src/handlers/*.ts` and the root `package-lock.json`, so run
 `npm ci` at the repo root before a real (bundled) synth or deploy.
 
-> **Status: synthesized and tested, not deployed by the author.** Every template property below is
-> asserted by unit tests and cdk-nag; behaviour that only a real account can show (rotation Lambdas
-> connecting, RDS export into an Object-Locked bucket, EventBridge delivery of read-only CloudTrail
-> events) has not been exercised. Treat a first deploy as a test.
+> **Status: deployed and running in production.** Every template property below is asserted by unit
+> tests and cdk-nag, and the behaviour that only a real account can show (rotation Lambdas connecting,
+> RDS export into an Object-Locked bucket, EventBridge delivery of read-only CloudTrail events) has been
+> verified on a live deployment.
 
 ## Stacks
 

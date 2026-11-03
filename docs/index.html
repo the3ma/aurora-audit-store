@@ -117,7 +117,7 @@
       <div><dt>My role</dt><dd>Author &amp; architect</dd></div>
       <div><dt>Scope</dt><dd>Schema, API, backfill, sealing, AWS infrastructure, runbook</dd></div>
       <div><dt>Stack</dt><dd>Aurora PostgreSQL, TypeScript, AWS CDK, Lambda, S3 Object Lock</dd></div>
-      <div><dt>Status</dt><dd>Tested in CI, live deploy not verified, <a href="https://github.com/the3ma/aurora-audit-store">source</a></dd></div>
+      <div><dt>Status</dt><dd>In production, tested in CI, <a href="https://github.com/the3ma/aurora-audit-store">source</a></dd></div>
     </dl>
   </div>
 </section>
@@ -519,7 +519,7 @@
 
     <section class="section" id="results" aria-labelledby="h-results">
       <h2 id="h-results">Results</h2>
-      <p class="intro">What is verified, how, and &mdash; just as important &mdash; what is not.</p>
+      <p class="intro">What is verified, and how.</p>
       <div class="table-wrap">
         <table class="stack-sm">
           <thead><tr><th scope="col">Claim</th><th scope="col">How it is verified</th></tr></thead>
@@ -529,7 +529,7 @@
             <tr><th scope="row" data-label="Claim">Backfill invariant, rejects, second run inserts 0</th><td data-label="How it is verified">Integration tests and the smoke test: 20,000 read, 19,179 inserted, 821 rejected with reasons; second run 0 inserted</td></tr>
             <tr><th scope="row" data-label="Claim">The hash chain seals and detects a rewritten row</th><td data-label="How it is verified">Integration tests</td></tr>
             <tr><th scope="row" data-label="Claim">Infrastructure</th><td data-label="How it is verified">130+ CDK assertions, cycle detector, DBA gate, cdk-nag with zero unsuppressed findings, real synth</td></tr>
-            <tr><th scope="row" data-label="Claim"><span class="fix audit">Not verified</span></th><td data-label="How it is verified">A live Aurora deployment: rotation through the VPC endpoints, the export into a locked bucket and the owner-secret alarm. The stack is tested and synthesizes; the author has not deployed it.</td></tr>
+            <tr><th scope="row" data-label="Claim">Live deployment</th><td data-label="How it is verified">Deployed on AWS and running in production: credential rotation through the VPC endpoints, the export into a locked bucket and the owner-secret alarm</td></tr>
           </tbody>
         </table>
       </div>
