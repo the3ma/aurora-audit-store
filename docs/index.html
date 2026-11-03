@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aurora audit store · Case study</title>
+  <meta name="description" content="Case study: moving an append-only audit log from DynamoDB to Aurora PostgreSQL - immutability you can prove, tamper evidence outside the database, retention by copies, and an idempotent, reconciled backfill.">
+  <meta property="og:title" content="Aurora audit store · Case study">
+  <meta property="og:description" content="An audit log you can prove: two append-only walls, a hash chain in an Object Lock bucket, retention by copies, and a backfill that never loses or duplicates an event.">
+  <meta property="og:type" content="article">
+  <meta name="color-scheme" content="dark light">
+  <link rel="preload" href="assets/fonts/overpass-latin-var.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/styles.css">
+  <script>
+    // Saved theme before first paint; otherwise follow the system (dark-first stylesheet).
+    (function () {
+      var root = document.documentElement, saved = null;
+      try { saved = localStorage.getItem('theme'); } catch (e) {}
+      if (saved === 'light' || saved === 'dark') root.setAttribute('data-theme', saved);
+      var dark = saved ? saved === 'dark' : !window.matchMedia('(prefers-color-scheme: light)').matches;
+      root.setAttribute('data-resolved', dark ? 'dark' : 'light');
+    })();
+  </script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="topbar">
+  <div class="wrap">
+    <a class="product" href="#top"><span class="mark" aria-hidden="true"></span><strong><span class="long">Aurora audit store</span><span class="short">Audit store</span></strong><span class="sub">Case study</span></a>
+    <div class="topbar-actions">
+      <button class="btn btn-secondary btn-sm theme-toggle" type="button" id="theme-toggle" aria-pressed="false">
+        <svg class="icon-moon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 9.6A5.6 5.6 0 0 1 6.4 2.5a5.6 5.6 0 1 0 7.1 7.1Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+        <svg class="icon-sun" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1v1.6M8 13.4V15M1 8h1.6M13.4 8H15M3 3l1.1 1.1M11.9 11.9 13 13M3 13l1.1-1.1M11.9 4.1 13 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <span class="label">Light theme</span>
+      </button>
+      <a class="btn btn-primary btn-sm topbar-contact" href="#contact" aria-label="Contact"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.75" y="3.25" width="12.5" height="9.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m2.5 4.5 5.5 4 5.5-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><span class="label">Contact</span></a>
+    </div>
+  </div>
+  <div class="progress" aria-hidden="true"></div>
+</header>
+
+<main id="main">
+
+<section class="hero" id="top" aria-labelledby="title">
+  <div class="wrap">
+    <h1 id="title">An audit log you can prove, not just promise.</h1>
+    <p class="lead">How an audit log in DynamoDB &mdash; where filters dropped matching events, &ldquo;append-only&rdquo; was a convention and a TTL deleted regulated records &mdash; moved to Aurora PostgreSQL with two append-only walls, a hash chain outside the database, retention by immutable copies and a backfill that never loses or duplicates an event. A public reference architecture, generalized from production work.</p>
+    <div class="hero-actions">
+      <a class="btn btn-primary" href="#contact">Contact</a>
+      <a class="btn btn-secondary" href="#architecture">Read the architecture</a>
+    </div>
+
+    <figure class="hero-map" aria-labelledby="hm-t">
+      <div class="map-h"><div class="diagram" tabindex="0" role="region" aria-label="The line one audit event rides">
+        <svg class="dg" viewBox="0 0 1100 260" role="img" aria-labelledby="hm-t hm-d">
+          <title id="hm-t">The line one audit event rides</title>
+          <desc id="hm-d">The record line runs through five stations: the event is written with its own idempotent event id, the GRANT wall lets writers only insert, the trigger wall blocks updates and deletes even for the owner, the event is stored in Aurora PostgreSQL, and every filter is applied before paging. Then the evidence line seals each closed day into a SHA-256 hash chain in an Object Lock bucket and re-verifies it, and the retention line keeps monthly locked backups, a cross-region copy and a Parquet archive.</desc>
+          <path class="rail export" d="M60,90 L1040,90"/>
+          <path class="rail audit" d="M1040,90 L1040,160 Q1040,196 1004,196 L700,196"/>
+          <path class="rail notify" d="M700,196 L260,196"/>
+          <circle class="stn export" cx="60" cy="90" r="11"/>
+          <circle class="stn export" cx="250" cy="90" r="11"/>
+          <circle class="stn export" cx="450" cy="90" r="11"/>
+          <circle class="stn export" cx="650" cy="90" r="11"/>
+          <circle class="stn export" cx="850" cy="90" r="11"/>
+          <circle class="stn ix" cx="1040" cy="90" r="14"/>
+          <circle class="stn audit" cx="880" cy="196" r="11"/>
+          <circle class="stn ix" cx="700" cy="196" r="14"/>
+          <circle class="stn notify" cx="560" cy="196" r="11"/>
+          <circle class="stn notify" cx="410" cy="196" r="11"/>
+          <circle class="stn term" cx="260" cy="196" r="13" style="fill:var(--l-notify);stroke:var(--l-notify)"/>
+          <text class="title" x="60" y="52" text-anchor="middle">Written</text>
+          <text class="small" x="60" y="128" text-anchor="middle">own event id</text>
+          <text class="title" x="250" y="52" text-anchor="middle">GRANT wall</text>
+          <text class="small" x="250" y="128" text-anchor="middle">writers can only INSERT</text>
+          <text class="title" x="450" y="52" text-anchor="middle">Trigger wall</text>
+          <text class="small" x="450" y="128" text-anchor="middle">no UPDATE, even the owner</text>
+          <text class="title" x="650" y="52" text-anchor="middle">Stored</text>
+          <text class="small" x="650" y="128" text-anchor="middle">Aurora PostgreSQL 16</text>
+          <text class="title" x="850" y="52" text-anchor="middle">Queried</text>
+          <text class="small" x="850" y="128" text-anchor="middle">filters before LIMIT</text>
+          <text class="title" x="1040" y="52" text-anchor="middle">Sealed daily</text>
+          <text class="small" x="1040" y="70" text-anchor="middle">closed ranges only</text>
+          <text class="title" x="880" y="236" text-anchor="middle">Object Lock</text>
+          <text class="small" x="880" y="254" text-anchor="middle">SHA-256 hash chain</text>
+          <text class="title" x="700" y="236" text-anchor="middle">Re-verified</text>
+          <text class="small" x="700" y="254" text-anchor="middle">daily and monthly</text>
+          <text class="title" x="560" y="236" text-anchor="middle">Monthly backup</text>
+          <text class="small" x="560" y="254" text-anchor="middle">Vault Lock, 7 years</text>
+          <text class="title" x="410" y="236" text-anchor="middle">DR copy</text>
+          <text class="small" x="410" y="254" text-anchor="middle">another region</text>
+          <text class="title" x="260" y="236" text-anchor="middle">Parquet archive</text>
+          <text class="small" x="260" y="254" text-anchor="middle">queryable, no restore</text>
+        </svg>
+      </div>
+      <p class="scroll-note">Swipe the map sideways to follow the whole line.</p></div>
+      <div class="map-v">
+        <svg class="dg" viewBox="0 0 340 790" role="img" aria-labelledby="hmv-t"><title id="hmv-t">The line one audit event rides, from the write to the Parquet archive</title>
+          <path class="rail export" d="M40,30 L40,390"/><path class="rail audit" d="M40,390 L40,534"/><path class="rail notify" d="M40,534 L40,750"/>
+          <circle class="stn export" cx="40" cy="30" r="11"/><text class="title" x="72" y="28">Written</text><text class="small" x="72" y="46">own event id</text>
+          <circle class="stn export" cx="40" cy="102" r="11"/><text class="title" x="72" y="100">GRANT wall</text><text class="small" x="72" y="118">writers can only INSERT</text>
+          <circle class="stn export" cx="40" cy="174" r="11"/><text class="title" x="72" y="172">Trigger wall</text><text class="small" x="72" y="190">no UPDATE, even the owner</text>
+          <circle class="stn export" cx="40" cy="246" r="11"/><text class="title" x="72" y="244">Stored</text><text class="small" x="72" y="262">Aurora PostgreSQL 16</text>
+          <circle class="stn export" cx="40" cy="318" r="11"/><text class="title" x="72" y="316">Queried</text><text class="small" x="72" y="334">filters before LIMIT</text>
+          <circle class="stn ix" cx="40" cy="390" r="14"/><text class="title" x="72" y="388">Sealed daily</text><text class="small" x="72" y="406">closed ranges only</text>
+          <circle class="stn audit" cx="40" cy="462" r="11"/><text class="title" x="72" y="460">Object Lock</text><text class="small" x="72" y="478">SHA-256 hash chain</text>
+          <circle class="stn ix" cx="40" cy="534" r="14"/><text class="title" x="72" y="532">Re-verified</text><text class="small" x="72" y="550">daily and monthly</text>
+          <circle class="stn notify" cx="40" cy="606" r="11"/><text class="title" x="72" y="604">Monthly backup</text><text class="small" x="72" y="622">Vault Lock, 7 years</text>
+          <circle class="stn notify" cx="40" cy="678" r="11"/><text class="title" x="72" y="676">DR copy</text><text class="small" x="72" y="694">another region</text>
+          <circle class="stn term" cx="40" cy="750" r="13" style="fill:var(--l-notify);stroke:var(--l-notify)"/><text class="title" x="72" y="748">Parquet archive</text><text class="small" x="72" y="766">queryable, no restore</text>
+        </svg>
+      </div>
+    </figure>
+
+    <dl class="meta">
+      <div><dt>My role</dt><dd>Author &amp; architect</dd></div>
+      <div><dt>Scope</dt><dd>Schema, API, backfill, sealing, AWS infrastructure, runbook</dd></div>
+      <div><dt>Stack</dt><dd>Aurora PostgreSQL, TypeScript, AWS CDK, Lambda, S3 Object Lock</dd></div>
+      <div><dt>Status</dt><dd>Tested in CI, live deploy not verified, <a href="https://github.com/the3ma/aurora-audit-store">source</a></dd></div>
+    </dl>
+  </div>
+</section>
+
+<div class="wrap layout">
+  <nav class="toc" aria-label="On this page">
+    <h2>On this page</h2>
+    <ol>
+        <li><a href="#summary">Summary</a></li>
+        <li><a href="#failures">The twelve failures</a></li>
+        <li><a href="#requirements">Requirements</a></li>
+        <li><a href="#users">Who it serves</a></li>
+        <li><a href="#evidence">The evidence</a></li>
+        <li><a href="#architecture">Architecture</a></li>
+        <li><a href="#decisions">Decisions</a></li>
+        <li><a href="#implementation">Implementation</a></li>
+        <li><a href="#operations">Operations</a></li>
+        <li><a href="#tradeoffs">Trade-offs</a></li>
+        <li><a href="#results">Results</a></li>
+        <li><a href="#try">Try it</a></li>
+        <li><a href="#lessons">Lessons</a></li>
+        <li><a href="#next">What&rsquo;s next</a></li>
+        <li><a href="#contact">Contact</a></li>
+    </ol>
+  </nav>
+
+  <article class="article">
+    <details class="toc-mobile">
+      <summary><span>On this page</span><span class="toc-current"></span></summary>
+      <ol>
+        <li><a href="#summary">Summary</a></li>
+        <li><a href="#failures">The twelve failures</a></li>
+        <li><a href="#requirements">Requirements</a></li>
+        <li><a href="#users">Who it serves</a></li>
+        <li><a href="#evidence">The evidence</a></li>
+        <li><a href="#architecture">Architecture</a></li>
+        <li><a href="#decisions">Decisions</a></li>
+        <li><a href="#implementation">Implementation</a></li>
+        <li><a href="#operations">Operations</a></li>
+        <li><a href="#tradeoffs">Trade-offs</a></li>
+        <li><a href="#results">Results</a></li>
+        <li><a href="#try">Try it</a></li>
+        <li><a href="#lessons">Lessons</a></li>
+        <li><a href="#next">What&rsquo;s next</a></li>
+        <li><a href="#contact">Contact</a></li>
+      </ol>
+    </details>
+
+    <section class="section" id="summary" aria-labelledby="h-summary">
+      <h2 id="h-summary">Executive summary</h2>
+      <p class="intro">The whole story in thirty seconds.</p>
+      <div class="ruled-3">
+        <div><h3>The problem</h3><p>An audit log in DynamoDB silently dropped matching events, could be edited by anyone with write access, and deleted regulated records on a timer it called retention.</p></div>
+        <div><h3>The approach</h3><p>Move it to Aurora PostgreSQL where correctness is enforced: filters before paging, two append-only walls, a daily hash chain in a locked bucket, and retention by immutable copies.</p></div>
+        <div><h3>The outcome</h3><p>Complete results with exact counts, a log even its owner can&rsquo;t rewrite unnoticed, and a backfill that accounts for every event &mdash; checked end to end in CI on seeded data.</p></div>
+      </div>
+    </section>
+
+    <section class="section" id="failures" aria-labelledby="h-failures">
+      <h2 id="h-failures">The twelve failures</h2>
+      <p class="intro">Cheap, scalable and fast for &ldquo;the last 50 events of this invoice&rdquo;. Then the audit grid grew filters, and auditors started asking for exports.</p>
+      <div class="table-wrap">
+        <table class="stack-sm">
+          <thead><tr><th scope="col">Symptom</th><th scope="col">Root cause</th><th scope="col">Fixed by</th></tr></thead>
+          <tbody>
+            <tr><th scope="row" data-label="Symptom">Filtering by date, user, action and text was slow and expensive</th><td data-label="Root cause">No combination was a key condition, so reads became scans with a filter, capped at 100 pages</td><td data-label="Fixed by"><span class="fix">one WHERE, indexes per read path</span></td></tr>
+            <tr><th scope="row" data-label="Symptom">Some matching events never showed up</th><td data-label="Root cause">A page was fetched first and filtered after, so matches outside it were dropped silently</td><td data-label="Fixed by"><span class="fix">filters applied before LIMIT</span></td></tr>
+            <tr><th scope="row" data-label="Symptom">No page numbers, no totals</th><td data-label="Root cause">Forward-only paging with no cheap count</td><td data-label="Fixed by"><span class="fix">keyset paging + exact COUNT</span></td></tr>
+            <tr><th scope="row" data-label="Symptom">Filter dropdowns needed a scan</th><td data-label="Root cause">No DISTINCT</td><td data-label="Fixed by"><span class="fix">materialized facet views</span></td></tr>
+            <tr><th scope="row" data-label="Symptom">Events missing from project views</th><td data-label="Root cause">One overloaded index key held a project or a tenant, never both</td><td data-label="Fixed by"><span class="fix">separate typed columns</span></td></tr>
+            <tr><th scope="row" data-label="Symptom">A scope view returned an arbitrary page</th><td data-label="Root cause">It fell back to a full scan, which is not time order</td><td data-label="Fixed by"><span class="fix">newest-first btree indexes</span></td></tr>
+            <tr><th scope="row" data-label="Symptom">Bad data was accepted</th><td data-label="Root cause">No types: misspelled scopes and malformed values stored as-is</td><td data-label="Fixed by"><span class="fix">enum, UUID, CHECK constraints</span></td></tr>
+            <tr><th scope="row" data-label="Symptom">Events could overwrite each other</th><td data-label="Root cause">The sort key used whole seconds as the change number</td><td data-label="Fixed by"><span class="fix">identity tiebreaker + unique event id</span></td></tr>
+            <tr><th scope="row" data-label="Symptom">Records were deleted automatically</th><td data-label="Root cause">The 7-year retention was a TTL, an expiry with no copy</td><td data-label="Fixed by"><span class="fix">retention by locked copies</span></td></tr>
+            <tr><th scope="row" data-label="Symptom">Append-only was a convention</th><td data-label="Root cause">Any writer could overwrite or delete an event, and nothing proved otherwise</td><td data-label="Fixed by"><span class="fix">two walls + hash chain</span></td></tr>
+            <tr><th scope="row" data-label="Symptom">Storage grew faster than the data</th><td data-label="Root cause">Four indexes projecting every attribute stored each item five times</td><td data-label="Fixed by"><span class="fix">btree indexes, no copies</span></td></tr>
+            <tr><th scope="row" data-label="Symptom">Exports were capped and built in the browser</th><td data-label="Root cause">One read of up to 5,000 items</td><td data-label="Fixed by"><span class="fix muted">out of scope</span> &mdash; see the companion <a href="https://the3ma.github.io/async-export-pipeline/">async export pipeline</a></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="source-note">A composite of problems met in production systems, not one company&rsquo;s incident; product details and numbers are changed. Full write-up: <a href="https://github.com/the3ma/aurora-audit-store/blob/main/docs/01-the-problem.md">docs/01-the-problem.md</a>.</p>
+    </section>
+
+    <section class="section" id="requirements" aria-labelledby="h-requirements">
+      <h2 id="h-requirements">What the replacement had to guarantee</h2>
+      <p class="intro">Twelve failures became ten requirements: the acceptance test for the design.</p>
+      <ul class="stations">
+        <li><strong>Complete results</strong><span>Any combination of filters, applied before paging, with exact counts.</span></li>
+        <li><strong>Stable paging</strong><span>Keyset pagination that stays correct while new events arrive.</span></li>
+        <li><strong>Cheap facets</strong><span>Filter dropdowns and daily counts for dashboards without scans.</span></li>
+        <li><strong>Typed, unique events</strong><span>Validated columns and a unique idempotency key per event.</span></li>
+        <li><strong>Append-only, provably</strong><span>Enforced by the database, not by convention.</span></li>
+        <li><strong>Tamper evidence outside</strong><span>So even the database owner cannot rewrite history unnoticed.</span></li>
+        <li><strong>Retention by copies</strong><span>Immutable copies, never deletion.</span></li>
+        <li><strong>Secured by default</strong><span>Encryption at rest and in transit, rotated credentials, least privilege, alerting.</span></li>
+        <li><strong>A lossless move</strong><span>Existing history moved across without losing or duplicating a single event, and proven.</span></li>
+        <li><strong>Reasonable cost</strong><span>For a log written all day and read in bursts.</span></li>
+      </ul>
+    </section>
+
+    <section class="section" id="users" aria-labelledby="h-users">
+      <h2 id="h-users">Who it serves</h2>
+      <p class="intro">Support answers &ldquo;who changed this?&rdquo;, security investigates, and external auditors check that the product records what it claims to record.</p>
+      <div class="ruled-3 personas">
+        <article class="persona">
+          <h3>Support &amp; security</h3>
+          <p class="role">Read the log every day</p>
+          <dl>
+            <div><dt>Job</dt><dd>Find exactly the events that match, fast, and trust the count.</dd></div>
+            <div><dt>Pain points</dt><dd>Results that looked complete but weren&rsquo;t; no totals or page numbers; slow, expensive filters.</dd></div>
+            <div><dt>What the design gives them</dt><dd>Any filter combination before paging, exact counts, keyset paging and cheap facets.</dd></div>
+          </dl>
+        </article>
+        <article class="persona">
+          <h3>Auditors &amp; compliance</h3>
+          <p class="role">Check the record itself</p>
+          <dl>
+            <div><dt>Job</dt><dd>Know the log is complete, unchanged and kept for seven years.</dd></div>
+            <div><dt>Pain points</dt><dd>Append-only by convention; records deleted by a TTL; nothing that proves the log was not edited.</dd></div>
+            <div><dt>What the design gives them</dt><dd>Two walls with proofs on every deploy, a hash chain in a locked bucket, locked monthly backups.</dd></div>
+          </dl>
+        </article>
+        <article class="persona">
+          <h3>Engineers &amp; operators</h3>
+          <p class="role">Run and change the store</p>
+          <dl>
+            <div><dt>Job</dt><dd>Deploy schema safely and move years of history without drama.</dd></div>
+            <div><dt>Pain points</dt><dd>&ldquo;Deployed the code, forgot the migration&rdquo;; no safe way to move data; storage that multiplied.</dd></div>
+            <div><dt>What the design gives them</dt><dd>Migrations inside the deployment, a reconciled backfill, rotated roles and alarms.</dd></div>
+          </dl>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="evidence" aria-labelledby="h-evidence">
+      <h2 id="h-evidence">The evidence</h2>
+      <p class="intro">The end-to-end smoke test, as printed by a CI run: backfill twice, both walls, the API and the hash chain, on seeded demo data.</p>
+      <figure class="shot">
+        <img src="images/smoke-case-study.svg" width="935" height="482" loading="lazy" decoding="async" alt="Output of make smoke: 20,000 legacy items read, 19,179 inserted and 821 rejected with reasons; a second run inserting 0; writer UPDATE stopped with 42501 by the GRANT wall and owner UPDATE with 23001 by the trigger wall; idempotent POST; 895 events over 5 pages with no duplicates; a misspelt filter rejected with 400; digest with 0 mismatches.">
+        <figcaption><p>From the repository&rsquo;s CI (<code>make smoke</code> locally). The 20,000 legacy items are seeded demo data with about 4% deliberately bad, so the rejects are expected.</p></figcaption>
+      </figure>
+    </section>
+
+    <section class="section" id="architecture" aria-labelledby="h-architecture">
+      <h2 id="h-architecture">Solution architecture</h2>
+      <p class="intro">Every component talks to the database in a private network, each with the least-privileged role it needs. Evidence and copies live outside the database, under locks.</p>
+      <ul class="legend" aria-label="Legend">
+        <li><i></i>Record line</li>
+        <li><i class="audit"></i>Evidence line</li>
+        <li><i class="notify"></i>Retention line</li>
+        <li><i class="fail"></i>Owner and reader roles</li>
+      </ul>
+      <div class="figures">
+        <figure>
+          <header><h3>System map</h3><span>Figure 1</span></header>
+          <div class="diagram" tabindex="0" role="region" aria-label="System map diagram">
+            <svg class="dg" viewBox="0 0 920 420" role="img" aria-labelledby="f1-t f1-d">
+              <title id="f1-t">System map</title>
+              <desc id="f1-d">Product services and the audit grid reach the API Lambda, which writes and reads Aurora PostgreSQL through the writer and reader roles. The migrate custom resource applies the schema and proofs as owner. The backfill function loads the legacy DynamoDB point-in-time export into Aurora. The daily digest reads Aurora and writes the hash chain to the Object Lock evidence bucket. Aurora is backed up monthly into a locked AWS Backup vault with a cross-region copy. Secrets Manager holds the rotated role passwords.</desc>
+              <path class="rail export" d="M190,80 L280,80"/>
+              <path class="rail export" d="M190,226 L250,226 L250,100 L280,100"/>
+              <path class="rail export" d="M430,86 L520,86"/>
+              <path class="rail export" d="M190,356 L280,356"/>
+              <path class="rail export" d="M430,356 L490,356 L490,104 L520,104"/>
+              <path class="rail fail" d="M430,226 L470,226 L470,140 L540,140 L540,112"/>
+              <path class="rail fail" d="M595,112 L595,200"/>
+              <path class="rail fail" d="M595,252 L595,330"/>
+              <path class="rail audit" d="M670,226 L740,226"/>
+              <path class="rail notify" d="M670,96 L705,96 L705,356 L740,356"/>
+              <rect class="box" x="40" y="60" width="150" height="52" rx="10"/><text class="title" x="115" y="82" text-anchor="middle">Product services</text><text class="small" x="115" y="100" text-anchor="middle">write events</text>
+              <rect class="box" x="40" y="200" width="150" height="52" rx="10"/><text class="title" x="115" y="222" text-anchor="middle">Audit grid</text><text class="small" x="115" y="240" text-anchor="middle">support, auditors</text>
+              <rect class="ext" x="40" y="330" width="150" height="52" rx="10"/><text class="title" x="115" y="352" text-anchor="middle">Legacy DynamoDB</text><text class="small" x="115" y="370" text-anchor="middle">PITR export</text>
+              <rect class="box" x="280" y="60" width="150" height="52" rx="10"/><text class="title" x="355" y="82" text-anchor="middle">API</text><text class="small" x="355" y="100" text-anchor="middle">Lambda, JWT</text>
+              <rect class="box" x="280" y="200" width="150" height="52" rx="10"/><text class="title" x="355" y="222" text-anchor="middle">migrate</text><text class="small" x="355" y="240" text-anchor="middle">custom resource</text>
+              <rect class="box" x="280" y="330" width="150" height="52" rx="10"/><text class="title" x="355" y="352" text-anchor="middle">backfill</text><text class="small" x="355" y="370" text-anchor="middle">run by hand</text>
+              <rect class="ext" x="520" y="60" width="150" height="52" rx="10"/><text class="title" x="595" y="82" text-anchor="middle">Aurora PostgreSQL</text><text class="small" x="595" y="100" text-anchor="middle">Serverless v2, KMS</text>
+              <rect class="box" x="520" y="200" width="150" height="52" rx="10"/><text class="title" x="595" y="222" text-anchor="middle">digest</text><text class="small" x="595" y="240" text-anchor="middle">daily, reader role</text>
+              <rect class="box" x="520" y="330" width="150" height="52" rx="10"/><text class="title" x="595" y="352" text-anchor="middle">mv-refresh</text><text class="small" x="595" y="370" text-anchor="middle">every 10 min</text>
+              <rect class="ext" x="740" y="60" width="150" height="52" rx="10"/><text class="title" x="815" y="82" text-anchor="middle">Secrets Manager</text><text class="small" x="815" y="100" text-anchor="middle">rotated 30 days</text>
+              <rect class="ext" x="740" y="200" width="150" height="52" rx="10"/><text class="title" x="815" y="222" text-anchor="middle">Evidence bucket</text><text class="small" x="815" y="240" text-anchor="middle">S3 Object Lock</text>
+              <rect class="ext" x="740" y="330" width="150" height="52" rx="10"/><text class="title" x="815" y="352" text-anchor="middle">Backup vault</text><text class="small" x="815" y="370" text-anchor="middle">Vault Lock, DR copy</text>
+              <text class="small lbl" x="235" y="70" text-anchor="middle">POST events</text>
+              <text class="small lbl" x="215" y="216" text-anchor="middle">GET events</text>
+              <text class="small lbl" x="475" y="76" text-anchor="middle">writer, reader</text>
+              <text class="small lbl" x="235" y="346" text-anchor="middle">export</text>
+              <text class="small lbl" x="458" y="290" text-anchor="middle">writer</text>
+              <text class="small lbl" x="462" y="176" text-anchor="end">owner: DDL + proofs</text>
+              <text class="small lbl" x="752" y="290" text-anchor="start">monthly</text>
+            </svg>
+          </div>
+          <figcaption><p>Product services write and the audit grid reads through one API with a JWT authorizer. The digest job reads with the reader role and writes the hash chain to the locked bucket. Secrets Manager holds the owner, writer and reader passwords, rotated every 30 days.</p></figcaption>
+        </figure>
+        <div class="table-wrap">
+          <table class="stack-sm">
+            <thead><tr><th scope="col">Piece</th><th scope="col">Locally (docker compose)</th><th scope="col">On AWS (CDK)</th></tr></thead>
+            <tbody>
+              <tr><th scope="row" data-label="Piece">Database</th><td data-label="Locally (docker compose)">PostgreSQL 16</td><td data-label="On AWS (CDK)">Aurora PostgreSQL 16, Serverless v2 (0.5&ndash;4 ACU), optional reader</td></tr>
+              <tr><th scope="row" data-label="Piece">Credentials</th><td data-label="Locally (docker compose)">Fixed dev passwords</td><td data-label="On AWS (CDK)">Secrets Manager, customer-managed KMS key, 30-day rotation</td></tr>
+              <tr><th scope="row" data-label="Piece">Migrations + proofs</th><td data-label="Locally (docker compose)">One-shot migrate container</td><td data-label="On AWS (CDK)">CloudFormation custom resource, re-run when the SQL checksum changes</td></tr>
+              <tr><th scope="row" data-label="Piece">API</th><td data-label="Locally (docker compose)">Node server</td><td data-label="On AWS (CDK)">Lambda behind an HTTP API with a JWT authorizer</td></tr>
+              <tr><th scope="row" data-label="Piece">Legacy table + export</th><td data-label="Locally (docker compose)">LocalStack DynamoDB, simulated export</td><td data-label="On AWS (CDK)">The real table with PITR, <code>ExportTableToPointInTime</code></td></tr>
+              <tr><th scope="row" data-label="Piece">Evidence</th><td data-label="Locally (docker compose)">LocalStack S3</td><td data-label="On AWS (CDK)">S3 with Object Lock (compliance mode in prod)</td></tr>
+              <tr><th scope="row" data-label="Piece">Backups</th><td data-label="Locally (docker compose)">&mdash;</td><td data-label="On AWS (CDK)">AWS Backup monthly, Vault Lock, cross-region copy</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="decisions" aria-labelledby="h-decisions">
+      <h2 id="h-decisions">Decisions</h2>
+      <p class="intro">Seven architecture decision records. The two that make the log provable lead.</p>
+      <div class="ledger">
+        <article class="ledger-row lead">
+          <div class="ledger-head"><h3>Append-only, enforced twice</h3><a class="adr" href="https://github.com/the3ma/aurora-audit-store/blob/main/docs/adr/0002-two-append-only-walls.md">ADR-0002</a></div>
+          <dl>
+            <div><dt>Context</dt><dd>An auditor needs a control that holds even when one layer is misconfigured: a role granted too much, or a trigger disabled.</dd></div>
+            <div><dt>Decision</dt><dd>A GRANT wall (writers only INSERT and SELECT, error 42501) and a trigger wall that stops UPDATE, DELETE and TRUNCATE even for the owner (error 23001), proven on every deploy.</dd></div>
+            <div class="why"><dt>Result</dt><dd>A compromised application credential cannot edit history; corrections are new events.</dd></div>
+          </dl>
+        </article>
+        <article class="ledger-row lead">
+          <div class="ledger-head"><h3>Tamper evidence outside the database</h3><a class="adr" href="https://github.com/the3ma/aurora-audit-store/blob/main/docs/adr/0004-tamper-evidence-outside-the-database.md">ADR-0004</a></div>
+          <dl>
+            <div><dt>Context</dt><dd>The owner can always disable a trigger, and evidence in the same database could be rewritten by the same person.</dd></div>
+            <div><dt>Decision</dt><dd>A daily SHA-256 hash chain over closed row ranges, written to an S3 Object Lock bucket the job can write but not delete; re-verified on a schedule.</dd></div>
+            <div class="why"><dt>Result</dt><dd>A rewritten row is detected afterwards, and a mismatch or a stale digest alarms.</dd></div>
+          </dl>
+        </article>
+        <article class="ledger-row">
+          <div class="ledger-head"><h3>Aurora PostgreSQL instead of DynamoDB</h3><a class="adr" href="https://github.com/the3ma/aurora-audit-store/blob/main/docs/adr/0001-aurora-postgres-over-dynamodb.md">ADR-0001</a></div>
+          <dl>
+            <div><dt>Context</dt><dd>The read side is ad-hoc filters, time order, exact counts and facets; every new filter meant a new index or a scan.</dd></div>
+            <div><dt>Decision</dt><dd>Aurora PostgreSQL 16, Serverless v2, 0.5 to 4 capacity units, writer-only with an optional reader.</dd></div>
+            <div class="why"><dt>Result</dt><dd>Correctness moves into the database: types, constraints, uniqueness and the walls.</dd></div>
+          </dl>
+        </article>
+        <article class="ledger-row">
+          <div class="ledger-head"><h3>Migrations inside the deployment</h3><a class="adr" href="https://github.com/the3ma/aurora-audit-store/blob/main/docs/adr/0003-schema-migrations-as-a-custom-resource.md">ADR-0003</a></div>
+          <dl>
+            <div><dt>Context</dt><dd>CloudFormation can&rsquo;t run DDL, the cluster has no public endpoint, and code must never start against an unexpected schema.</dd></div>
+            <div><dt>Decision</dt><dd>A custom resource keyed on the SHA-256 of the migrations applies them in one transaction, sets role passwords and runs the proofs.</dd></div>
+            <div class="why"><dt>Result</dt><dd>Schema and code ship and roll back together.</dd></div>
+          </dl>
+        </article>
+        <article class="ledger-row">
+          <div class="ledger-head"><h3>Retention by copies, never by expiry</h3><a class="adr" href="https://github.com/the3ma/aurora-audit-store/blob/main/docs/adr/0005-retention-by-copies-not-ttl.md">ADR-0005</a></div>
+          <dl>
+            <div><dt>Context</dt><dd>The old &ldquo;7-year retention&rdquo; deleted regulated records on a timer.</dd></div>
+            <div><dt>Decision</dt><dd>No expiry column; point-in-time recovery, monthly AWS Backup under Vault Lock for 7 years with a cross-region copy, and a monthly Parquet archive.</dd></div>
+            <div class="why"><dt>Result</dt><dd>Deleting history means breaking a lock, not forgetting a TTL.</dd></div>
+          </dl>
+        </article>
+        <article class="ledger-row">
+          <div class="ledger-head"><h3>Backfill from a point-in-time export</h3><a class="adr" href="https://github.com/the3ma/aurora-audit-store/blob/main/docs/adr/0006-backfill-from-a-point-in-time-export.md">ADR-0006</a></div>
+          <dl>
+            <div><dt>Context</dt><dd>Years of history must move without losing, duplicating or silently fixing an event, and someone else must be able to check.</dd></div>
+            <div><dt>Decision</dt><dd>Export at a fixed point in time, deterministic ids, reject never coerce, ON CONFLICT DO NOTHING, an asserted invariant and a second run.</dd></div>
+            <div class="why"><dt>Result</dt><dd>The backfill can be stopped and re-run at any time.</dd></div>
+          </dl>
+        </article>
+        <article class="ledger-row">
+          <div class="ledger-head"><h3>Rotated password roles</h3><a class="adr" href="https://github.com/the3ma/aurora-audit-store/blob/main/docs/adr/0007-password-roles-over-iam-auth.md">ADR-0007</a></div>
+          <dl>
+            <div><dt>Context</dt><dd>Least privilege per component and rotating credentials, without restarts.</dd></div>
+            <div><dt>Decision</dt><dd>Owner, writer and reader roles with their own secrets, rotated every 30 days; pools retry once on an auth error.</dd></div>
+            <div class="why"><dt>Result</dt><dd>Normal pooling, no per-connection signing.</dd></div>
+          </dl>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="implementation" aria-labelledby="h-implementation">
+      <h2 id="h-implementation">Implementation</h2>
+      <p class="intro">The mechanisms that carry the guarantees, drawn on the same three lines.</p>
+      <div class="figures">
+        <figure>
+          <header><h3>Two append-only walls</h3><span>Figure 2</span></header>
+          <div class="diagram" tabindex="0" role="region" aria-label="Two walls diagram">
+            <svg class="dg" viewBox="0 0 920 280" role="img" aria-labelledby="f2-t f2-d">
+              <title id="f2-t">Two append-only walls</title>
+              <desc id="f2-d">An UPDATE or DELETE by the writer or reader role is stopped at the GRANT wall with error 42501. The same statement by the table owner passes the GRANT wall but is stopped at the trigger wall with error 23001. An INSERT by the writer passes both walls and reaches the audit_event table.</desc>
+              <rect x="320" y="40" width="12" height="210" rx="4" style="fill:var(--ink)"/>
+              <rect x="600" y="40" width="12" height="210" rx="4" style="fill:var(--ink)"/>
+              <text class="title" x="326" y="28" text-anchor="middle">GRANT wall</text>
+              <text class="title" x="606" y="28" text-anchor="middle">Trigger wall</text>
+              <text class="small" x="40" y="76">writer / reader</text><text class="title" x="40" y="94">UPDATE, DELETE</text>
+              <path class="rail fail" d="M170,90 L314,90"/>
+              <text class="title lbl" x="346" y="94">42501 insufficient privilege</text>
+              <text class="small" x="40" y="146">owner</text><text class="title" x="40" y="164">UPDATE, DELETE, TRUNCATE</text>
+              <path class="rail fail" d="M230,160 L594,160"/>
+              <text class="title lbl" x="626" y="164">23001 restrict violation</text>
+              <text class="small" x="40" y="216">writer</text><text class="title" x="40" y="234">INSERT</text>
+              <path class="rail export" d="M110,230 L740,230"/>
+              <circle class="stn export" cx="326" cy="230" r="9"/>
+              <circle class="stn export" cx="606" cy="230" r="9"/>
+              <rect class="ext" x="740" y="204" width="150" height="52" rx="10"/><text class="title" x="815" y="226" text-anchor="middle">audit_event</text><text class="small" x="815" y="244" text-anchor="middle">append-only table</text>
+            </svg>
+          </div>
+          <figcaption><p>Each wall is enough on its own and fails with its own error code, so a test can tell which one stopped a statement. Every deploy runs 16 proofs; CI disables the trigger and requires the owner proofs to fail, which shows the proofs can detect a hole.</p></figcaption>
+        </figure>
+        <figure>
+          <header><h3>The hash chain</h3><span>Figure 3</span></header>
+          <div class="diagram" tabindex="0" role="region" aria-label="Hash chain diagram">
+            <svg class="dg" viewBox="0 0 920 250" role="img" aria-labelledby="f3-t f3-d">
+              <title id="f3-t">The hash chain</title>
+              <desc id="f3-d">Every day the digest job seals each closed range of rows into a block whose hash is the SHA-256 of the previous block hash and the hash of its rows, in row order. Each block is written to the Object Lock evidence bucket. Rows recorded today are sealed tomorrow.</desc>
+              <path class="rail audit" d="M230,98 L260,98"/>
+              <path class="rail audit" d="M450,98 L480,98"/>
+              <path class="rail audit" d="M670,98 L700,98"/>
+              <rect class="box" x="40" y="60" width="190" height="76" rx="10"/><text class="title" x="135" y="82" text-anchor="middle">Block n-2</text><text class="small" x="135" y="100" text-anchor="middle">closed range of rows</text>
+              <text class="small" x="135" y="124" text-anchor="middle">sha256(prev || rows)</text>
+              <rect class="box" x="260" y="60" width="190" height="76" rx="10"/><text class="title" x="355" y="82" text-anchor="middle">Block n-1</text><text class="small" x="355" y="100" text-anchor="middle">closed range of rows</text>
+              <text class="small" x="355" y="124" text-anchor="middle">sha256(prev || rows)</text>
+              <rect class="box" x="480" y="60" width="190" height="76" rx="10"/><text class="title" x="575" y="82" text-anchor="middle">Block n</text><text class="small" x="575" y="100" text-anchor="middle">yesterday&rsquo;s rows</text>
+              <text class="small" x="575" y="124" text-anchor="middle">sha256(prev || rows)</text>
+              <rect class="band-new" x="700" y="60" width="190" height="76" rx="10"/><text class="title" x="795" y="88" text-anchor="middle">Today</text><text class="small" x="795" y="106" text-anchor="middle">still open</text><text class="small" x="795" y="124" text-anchor="middle">sealed tomorrow</text>
+              <path class="rail audit" d="M135,136 L135,200 L575,200 L575,136"/>
+              <path class="rail audit" d="M355,136 L355,200"/>
+              <circle class="stn audit" cx="135" cy="200" r="9"/><circle class="stn audit" cx="355" cy="200" r="9"/><circle class="stn audit" cx="575" cy="200" r="9"/>
+              <text class="small lbl" x="355" y="228" text-anchor="middle">each block written to the Object Lock evidence bucket</text>
+            </svg>
+          </div>
+          <figcaption><p>The owner can still disable a trigger, so the evidence lives where the owner cannot reach it. Rows are hashed inside the database with the reader role; recent blocks are re-verified daily and all blocks monthly, and a mismatch or a stale digest alarms.</p></figcaption>
+        </figure>
+        <figure>
+          <header><h3>The backfill</h3><span>Figure 4</span></header>
+          <div class="diagram" tabindex="0" role="region" aria-label="Backfill diagram">
+            <svg class="dg" viewBox="0 0 920 270" role="img" aria-labelledby="f4-t f4-d">
+              <title id="f4-t">The backfill</title>
+              <desc id="f4-d">The legacy table gets point-in-time recovery and deletion protection, and its TTL is disabled. It is exported to S3 at a fixed point in time. The backfill maps each item, rejects bad items with a reason, and inserts the rest into Aurora with ON CONFLICT DO NOTHING. It asserts that read equals inserted plus already present plus rejected, writes a manifest to the Object Lock bucket, and a second run must insert zero.</desc>
+              <path class="rail export" d="M70,90 L850,90"/>
+              <path class="rail fail" d="M450,102 L450,180 L340,180"/>
+              <path class="rail audit" d="M850,102 L850,168"/>
+              <circle class="stn export" cx="70" cy="90" r="11"/><circle class="stn export" cx="250" cy="90" r="11"/><circle class="stn ix" cx="450" cy="90" r="14"/><circle class="stn ix" cx="650" cy="90" r="14"/><circle class="stn term" cx="850" cy="90" r="13"/>
+              <circle class="stn audit" cx="850" cy="180" r="11"/>
+              <text class="title" x="70" y="52" text-anchor="middle">Protect</text><text class="small" x="70" y="128" text-anchor="middle">PITR on, TTL off</text>
+              <text class="title" x="250" y="52" text-anchor="middle">Export</text><text class="small" x="250" y="128" text-anchor="middle">fixed point in time</text>
+              <text class="title" x="450" y="52" text-anchor="middle">Map and check</text><text class="small lbl" x="450" y="128" text-anchor="middle">UUIDv5 ids, reject never coerce</text>
+              <text class="title" x="650" y="52" text-anchor="middle">Insert</text><text class="small" x="650" y="128" text-anchor="middle">ON CONFLICT DO NOTHING</text>
+              <text class="title" x="850" y="52" text-anchor="middle">Run again</text><text class="small lbl" x="850" y="128" text-anchor="middle">must insert 0</text>
+              <text class="small lbl" x="332" y="184" text-anchor="end">rejected, with reasons</text>
+              <text class="title" x="850" y="214" text-anchor="middle">Manifest</text><text class="small" x="850" y="232" text-anchor="middle">Object Lock bucket</text>
+              <text class="title" x="560" y="246" text-anchor="middle">read = inserted + already present + rejected</text>
+            </svg>
+          </div>
+          <figcaption><p>Rejects are a list for a human, never a silent fix. The function refuses to write a manifest unless every item read is inserted, already present or rejected, and the second run must insert nothing.</p></figcaption>
+        </figure>
+        <figure>
+          <header><h3>The cutover</h3><span>Figure 5</span></header>
+          <div class="diagram" tabindex="0" role="region" aria-label="Cutover diagram">
+            <svg class="dg" viewBox="0 0 920 170" role="img" aria-labelledby="f5-t f5-d">
+              <title id="f5-t">The cutover</title>
+              <desc id="f5-d">Five steps in order: protect the legacy table (point-in-time recovery, deletion protection, TTL disabled); stand up the new store with the proofs; export and backfill, reconcile and run again; switch writes and backfill the gap with a second export; keep the legacy table read-only until someone other than the operator signs off.</desc>
+              <path class="rail export" d="M70,80 L850,80"/>
+              <circle class="stn export" cx="70" cy="80" r="11"/><circle class="stn export" cx="265" cy="80" r="11"/><circle class="stn export" cx="460" cy="80" r="11"/><circle class="stn export" cx="655" cy="80" r="11"/><circle class="stn term" cx="850" cy="80" r="13"/>
+              <text class="title" x="70" y="44" text-anchor="middle">Protect</text><text class="small" x="70" y="118" text-anchor="middle">PITR, no TTL, retain</text>
+              <text class="title" x="265" y="44" text-anchor="middle">Stand up</text><text class="small" x="265" y="118" text-anchor="middle">deploy fails if a proof fails</text>
+              <text class="title" x="460" y="44" text-anchor="middle">Backfill</text><text class="small" x="460" y="118" text-anchor="middle">dry run, real run, run again</text>
+              <text class="title" x="655" y="44" text-anchor="middle">Switch writes</text><text class="small" x="655" y="118" text-anchor="middle">second export fills the gap</text>
+              <text class="title" x="850" y="44" text-anchor="middle">Sign-off</text><text class="small" x="850" y="118" text-anchor="middle">by someone else</text>
+            </svg>
+          </div>
+          <figcaption><p>Protect the old data first, move it second, switch writes third, and retire the old table only after someone other than the operator has signed off the reconciliation. The full checklist is in <a href="https://github.com/the3ma/aurora-audit-store/blob/main/docs/04-cutover-runbook.md">docs/04-cutover-runbook.md</a>.</p></figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section" id="operations" aria-labelledby="h-operations">
+      <h2 id="h-operations">Running it safely</h2>
+      <p class="intro">The controls that keep the guarantees true after the first deploy.</p>
+      <ul class="stations">
+        <li><strong>Migrations inside the deployment</strong><span>A custom resource applies SQL in one transaction, sets role passwords and runs the proofs; any failure rolls the deploy back.</span></li>
+        <li><strong>Checksum drift is an error</strong><span>An applied migration whose file changed never re-runs silently; removing the stack never drops data.</span></li>
+        <li><strong>Three roles, rotated</strong><span>Owner, writer and reader secrets rotate every 30 days; pools drop and retry once on an auth error, with no restart.</span></li>
+        <li><strong>TLS and a private network</strong><span>TLS forced and verified against the RDS CA; Lambdas in private subnets with no NAT.</span></li>
+        <li><strong>Alarms on what matters</strong><span>Capacity, connections, deadlocks, restarts, digest mismatch and age, archive freshness, mutation attempts, reads of the owner secret.</span></li>
+        <li><strong>Gates in CI</strong><span>130+ CDK assertions, a dependency-cycle test, a DBA gate for destructive SQL, cdk-nag with zero unsuppressed findings.</span></li>
+      </ul>
+    </section>
+
+    <section class="section" id="tradeoffs" aria-labelledby="h-tradeoffs">
+      <h2 id="h-tradeoffs">Trade-offs</h2>
+      <p class="intro">The costs the ADRs accept on purpose, written down rather than hidden.</p>
+      <div class="table-wrap">
+        <table class="stack-sm">
+          <thead><tr><th scope="col">Chose</th><th scope="col">Instead of</th><th scope="col">The cost, and why it&rsquo;s worth it</th></tr></thead>
+          <tbody>
+            <tr><th scope="row" data-label="Chose">Aurora Serverless v2</th><td data-label="Instead of">More GSIs, or DynamoDB plus a search index</td><td data-label="The cost, and why it's worth it">A capacity floor that bills while idle, in exchange for arbitrary predicates, counts, constraints and enforceable append-only.</td></tr>
+            <tr><th scope="row" data-label="Chose">Two walls + a hash chain</th><td data-label="Instead of">Trusting the owner</td><td data-label="The cost, and why it's worth it">The owner can still disable a trigger; the chain detects a rewritten row afterwards, and reads of the owner secret alarm.</td></tr>
+            <tr><th scope="row" data-label="Chose">Monthly locked backups</th><td data-label="Instead of">Daily recovery points</td><td data-label="The cost, and why it's worth it">Daily points over 7 years would be about 2,555 locked snapshots; between PITR and the monthly archive the recovery point is up to a month, documented.</td></tr>
+            <tr><th scope="row" data-label="Chose">Backfill from a PITR export</th><td data-label="Instead of">Dual-write, scanning the live table or Streams replay</td><td data-label="The cost, and why it's worth it">PITR must be on first, but there is a fixed snapshot to reconcile against and no read capacity is used.</td></tr>
+            <tr><th scope="row" data-label="Chose">Rotated password roles</th><td data-label="Instead of">IAM database auth or RDS Proxy</td><td data-label="The cost, and why it's worth it">Pools must survive a rotation; in return no per-connection signing and no extra always-on proxy.</td></tr>
+            <tr><th scope="row" data-label="Chose">No automated heavy-lock DDL</th><td data-label="Instead of">Migrating everything automatically</td><td data-label="The cost, and why it's worth it">Large-table locking changes stay a deliberate, reviewed step.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section" id="results" aria-labelledby="h-results">
+      <h2 id="h-results">Results</h2>
+      <p class="intro">What is verified, how, and &mdash; just as important &mdash; what is not.</p>
+      <div class="table-wrap">
+        <table class="stack-sm">
+          <thead><tr><th scope="col">Claim</th><th scope="col">How it is verified</th></tr></thead>
+          <tbody>
+            <tr><th scope="row" data-label="Claim">Schema, walls, proofs, negative control</th><td data-label="How it is verified">Integration tests on real PostgreSQL 16 in CI</td></tr>
+            <tr><th scope="row" data-label="Claim">Filters, keyset paging, the LIMIT-before-filter regression</th><td data-label="How it is verified">Integration tests and the compose smoke test</td></tr>
+            <tr><th scope="row" data-label="Claim">Backfill invariant, rejects, second run inserts 0</th><td data-label="How it is verified">Integration tests and the smoke test: 20,000 read, 19,179 inserted, 821 rejected with reasons; second run 0 inserted</td></tr>
+            <tr><th scope="row" data-label="Claim">The hash chain seals and detects a rewritten row</th><td data-label="How it is verified">Integration tests</td></tr>
+            <tr><th scope="row" data-label="Claim">Infrastructure</th><td data-label="How it is verified">130+ CDK assertions, cycle detector, DBA gate, cdk-nag with zero unsuppressed findings, real synth</td></tr>
+            <tr><th scope="row" data-label="Claim"><span class="fix audit">Not verified</span></th><td data-label="How it is verified">A live Aurora deployment: rotation through the VPC endpoints, the export into a locked bucket and the owner-secret alarm. The stack is tested and synthesizes; the author has not deployed it.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3 class="subhead">System figures</h3>
+      <div class="table-wrap">
+        <table class="stack-sm">
+          <thead><tr><th scope="col">Setting</th><th scope="col">Value</th><th scope="col">Why</th></tr></thead>
+          <tbody>
+            <tr><th scope="row" data-label="Setting">Immutability proofs per deploy</th><td class="num" data-label="Value">16</td><td data-label="Why">Inconclusive never counts as a pass.</td></tr>
+            <tr><th scope="row" data-label="Setting">Retention</th><td class="num" data-label="Value">7 years</td><td data-label="Why">Monthly locked recovery points with a cross-region copy.</td></tr>
+            <tr><th scope="row" data-label="Setting">Point-in-time recovery</th><td class="num" data-label="Value">35 days</td><td data-label="Why">The operational safety net in the prod stage (7 days in dev).</td></tr>
+            <tr><th scope="row" data-label="Setting">Credential rotation</th><td class="num" data-label="Value">30 days</td><td data-label="Why">Absorbed by the pools without a restart.</td></tr>
+            <tr><th scope="row" data-label="Setting">Facet and daily-count refresh</th><td class="num" data-label="Value">10 min</td><td data-label="Why">Dropdowns and dashboards without scans.</td></tr>
+            <tr><th scope="row" data-label="Setting">Capacity</th><td class="num" data-label="Value">0.5&ndash;4 ACU</td><td data-label="Why">An audit log is written all day but read in bursts.</td></tr>
+            <tr><th scope="row" data-label="Setting">Estimated monthly floor</th><td class="num" data-label="Value">~$145 / ~$190</td><td data-label="Why">Dev / prod, from the infrastructure README; most of it is the capacity floor and private endpoints.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="source-note">Configuration values and the cost estimate come from the repository&rsquo;s documentation; they describe how the system is built, not production KPIs.</p>
+    </section>
+
+    <section class="section" id="try" aria-labelledby="h-try">
+      <h2 id="h-try">Try it yourself</h2>
+      <p class="intro">PostgreSQL, LocalStack, the migrate job and the API run locally with one command.</p>
+<pre class="terminal" aria-label="Commands to run the project locally"><span class="p">$ </span>git clone https://github.com/the3ma/aurora-audit-store.git
+<span class="p">$ </span>cd aurora-audit-store
+<span class="p">$ </span>make up      <span class="c"># db, localstack, migrate (schema + role passwords + proofs), api</span>
+<span class="p">$ </span>make seed    <span class="c"># 20,000 legacy DynamoDB items, about 4% deliberately bad</span>
+<span class="p">$ </span>make smoke   <span class="c"># export -> backfill twice -> both walls -> API -> views -> digest</span></pre>
+      <p class="source-note">No Docker? <code>npm ci &amp;&amp; npm run test:pg:local</code> runs the integration suite on an embedded PostgreSQL 16. More in <a href="https://github.com/the3ma/aurora-audit-store/blob/main/docs/03-running-locally.md">docs/03-running-locally.md</a>.</p>
+    </section>
+
+    <section class="section" id="lessons" aria-labelledby="h-lessons">
+      <h2 id="h-lessons">Lessons</h2>
+      <p class="intro">What carries over to the next system that has to be trusted by an auditor.</p>
+      <ul class="stations">
+        <li><strong>A control you can&rsquo;t prove is a convention.</strong><span>Run the proof on every deploy, and prove the proof works with a negative control.</span></li>
+        <li><strong>Keep evidence where its subject can&rsquo;t reach it.</strong><span>A hash chain in the same database can be rewritten by the same person.</span></li>
+        <li><strong>Retention means being able to produce the record.</strong><span>A timer that deletes is the opposite of retention.</span></li>
+        <li><strong>A migration is finished when someone else can check it.</strong><span>An invariant, a manifest and a second run that inserts nothing.</span></li>
+      </ul>
+    </section>
+
+    <section class="section" id="next" aria-labelledby="h-next">
+      <h2 id="h-next">What&rsquo;s next</h2>
+      <p class="intro">The roadmap, with the trade-off each step carries.</p>
+      <div class="ruled-3">
+        <div><h3>Monthly partitioning</h3><p>Once a disposal policy exists; the unique event id would have to include the partition key, a deliberate trade-off.</p></div>
+        <div><h3>Incremental rollups</h3><p>Instead of full materialized-view refreshes as the table grows.</p></div>
+        <div><h3>Outbox and proxy</h3><p>A transactional outbox for writers that can&rsquo;t share a transaction, and RDS Proxy if connections come under pressure.</p></div>
+      </div>
+    </section>
+
+    <section class="contact" id="contact" aria-labelledby="h-contact">
+      <h2 id="h-contact">Need records an auditor can trust?</h2>
+      <p>I design and build systems like this one. If you are hiring, or have an audit trail that has to hold up, I&rsquo;d like to hear about it.</p>
+      <ul class="contact-list">
+        <li><a href="mailto:the3ma@gmail.com"><small>Email</small><b>the3ma@gmail.com</b></a></li>
+        <li><a href="https://www.linkedin.com/in/hristo-atanasov-84a525175/"><small>LinkedIn</small><b>Hristo Atanasov</b></a></li>
+        <li><a href="https://github.com/the3ma"><small>GitHub</small><b>github.com/the3ma</b></a></li>
+      </ul>
+    </section>
+  </article>
+</div>
+</main>
+
+<footer class="site">
+  <div class="wrap"><p>Generalized from production work: the employer, client and product are not named, and details and numbers are changed. Source code at <a href="https://github.com/the3ma/aurora-audit-store">github.com/the3ma/aurora-audit-store</a>.</p></div>
+</footer>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    var media = window.matchMedia('(prefers-color-scheme: light)');
+    var btn = document.getElementById('theme-toggle');
+    var label = btn.querySelector('.label');
+    function isDark() { var t = root.getAttribute('data-theme'); return t ? t === 'dark' : !media.matches; }
+    function render() {
+      var dark = isDark();
+      root.setAttribute('data-resolved', dark ? 'dark' : 'light');
+      label.textContent = dark ? 'Light theme' : 'Dark theme';
+      btn.setAttribute('aria-pressed', String(!dark));
+      btn.setAttribute('aria-label', dark ? 'Switch to the light theme' : 'Switch to the dark theme');
+    }
+    btn.addEventListener('click', function () {
+      var next = isDark() ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      try { localStorage.setItem('theme', next); } catch (e) {}
+      render();
+    });
+    media.addEventListener('change', render);
+    render();
+
+    // Progress bar + the rail as a transit line: stations passed, current station, line fill.
+    var bar = document.querySelector('.progress');
+    var rail = document.querySelector('.toc ol');
+    var links = Array.prototype.slice.call(document.querySelectorAll('.toc a'));
+    var mlinks = Array.prototype.slice.call(document.querySelectorAll('.toc-mobile a'));
+    var mcurrent = document.querySelector('.toc-current');
+    var sections = links.map(function (a) { return document.getElementById(a.getAttribute('href').slice(1)); });
+    var current = null, ticking = false;
+    function update() {
+      var max = document.documentElement.scrollHeight - window.innerHeight;
+      bar.style.transform = 'scaleX(' + (max > 0 ? Math.min(1, window.scrollY / max) : 0) + ')';
+      var active = -1;
+      for (var i = 0; i < sections.length; i++) { if (sections[i] && sections[i].getBoundingClientRect().top <= 140) active = i; }
+      var last = sections[sections.length - 1];
+      if ((max > 0 && window.scrollY >= max - 2) || (last && last.getBoundingClientRect().top < window.innerHeight * 0.6)) active = sections.length - 1;
+      if (active !== current) {
+        [links, mlinks].forEach(function (list) {
+          list.forEach(function (a, j) {
+            if (j === active) a.setAttribute('aria-current', 'true'); else a.removeAttribute('aria-current');
+            a.classList.toggle('passed', j < active);
+          });
+        });
+        if (mcurrent) mcurrent.textContent = active > -1 ? links[active].textContent : '';
+        if (rail) {
+          var fill = 0;
+          if (active > -1 && links[active].offsetParent) {
+            var dot = links[active].getBoundingClientRect(), top = rail.getBoundingClientRect();
+            fill = Math.max(0, dot.top + dot.height / 2 - top.top - 12);
+          }
+          rail.style.setProperty('--fill', fill + 'px');
+        }
+        current = active;
+      }
+      ticking = false;
+    }
+    window.addEventListener('scroll', function () { if (!ticking) { ticking = true; requestAnimationFrame(update); } }, { passive: true });
+    window.addEventListener('resize', function () { current = null; update(); });
+    update();
+    var mobile = document.querySelector('.toc-mobile');
+    if (mobile) mobile.addEventListener('click', function (e) { if (e.target.closest('a')) mobile.removeAttribute('open'); });
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="935" height="482" viewBox="0 0 935 482" role="img" aria-label="make smoke - aurora-audit-store output">
+<rect width="100%" height="100%" rx="10" fill="#0d1117" stroke="#30363d"/>
+<text x="467.5" y="23" fill="#8b949e" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" text-anchor="middle">make smoke - aurora-audit-store</text>
+<g font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="14">
+<text x="18" y="58" xml:space="preserve"><tspan fill="#8b949e">$</tspan><tspan fill="#e6edf3"> make smoke</tspan></text>
+<text x="18" y="78" xml:space="preserve"><tspan fill="#e6edf3" font-weight="700">== health</tspan></text>
+<text x="18" y="98" xml:space="preserve"><tspan fill="#3fb950">ok</tspan><tspan fill="#e6edf3">  api healthy</tspan></text>
+<text x="18" y="118" xml:space="preserve"><tspan fill="#3fb950">ok</tspan><tspan fill="#e6edf3">  legacy table exported to s3://legacy-export/exports/AWSDynamoDB/1792756361152-5c6709da</tspan></text>
+<text x="18" y="138" xml:space="preserve"><tspan fill="#e6edf3" font-weight="700">== 1. backfill</tspan></text>
+<text x="18" y="158" xml:space="preserve"><tspan fill="#e6edf3">   read=20000 inserted=19179 alreadyPresent=0 rejected=821</tspan></text>
+<text x="18" y="178" xml:space="preserve"><tspan fill="#3fb950">ok</tspan><tspan fill="#e6edf3">  invariant holds, 821 rejected with reasons:</tspan></text>
+<text x="18" y="198" xml:space="preserve"><tspan fill="#e6edf3">    {"invalid_scope":216,"invalid_date":193,"invalid_changes":203,"invalid_event_id":209,"missing_field":0}</tspan></text>
+<text x="18" y="218" xml:space="preserve"><tspan fill="#e6edf3" font-weight="700">== 2. backfill again</tspan></text>
+<text x="18" y="238" xml:space="preserve"><tspan fill="#3fb950">ok</tspan><tspan fill="#e6edf3">  second run inserted 0, 19179 already present</tspan></text>
+<text x="18" y="258" xml:space="preserve"><tspan fill="#e6edf3" font-weight="700">== 3. append-only walls</tspan></text>
+<text x="18" y="278" xml:space="preserve"><tspan fill="#3fb950">ok</tspan><tspan fill="#e6edf3">  writer UPDATE -&gt; 42501 (GRANT wall)</tspan></text>
+<text x="18" y="298" xml:space="preserve"><tspan fill="#3fb950">ok</tspan><tspan fill="#e6edf3">  owner UPDATE -&gt; 23001 (trigger wall)</tspan></text>
+<text x="18" y="318" xml:space="preserve"><tspan fill="#e6edf3" font-weight="700">== 4. API</tspan></text>
+<text x="18" y="338" xml:space="preserve"><tspan fill="#3fb950">ok</tspan><tspan fill="#e6edf3">  POST is idempotent (201, then 200 on replay)</tspan></text>
+<text x="18" y="358" xml:space="preserve"><tspan fill="#3fb950">ok</tspan><tspan fill="#e6edf3">  tenant t-005, scope=billing: 895 events over 5 pages, no duplicates, equals /count</tspan></text>
+<text x="18" y="378" xml:space="preserve"><tspan fill="#3fb950">ok</tspan><tspan fill="#e6edf3">  misspelt filter -&gt; 400 (never a silently unfiltered result)</tspan></text>
+<text x="18" y="398" xml:space="preserve"><tspan fill="#e6edf3" font-weight="700">== 5. views and digest</tspan></text>
+<text x="18" y="418" xml:space="preserve"><tspan fill="#3fb950">ok</tspan><tspan fill="#e6edf3">  materialized views refreshed, facets served</tspan></text>
+<text x="18" y="438" xml:space="preserve"><tspan fill="#3fb950">ok</tspan><tspan fill="#e6edf3">  digest ran: sealed=0 (rows recorded today are sealed tomorrow), 0 mismatches</tspan></text>
+<text x="18" y="458" xml:space="preserve"><tspan fill="#3fb950">Smoke test passed.</tspan></text>
+</g>
+</svg>
